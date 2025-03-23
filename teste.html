@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa de Postes</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <style>
+        #map { height: 850px; width: 100%; }
+        #search-container { margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h2>Mapa de Postes e Seriais</h2>
+    <div id="search-container">
+        <input type="text" id="search" placeholder="Digite o serial ou plaqueta...">
+        <button onclick="buscarPoste()">Buscar</button>
+    </div>
+    <div id="map"></div>
+
+    <script>
+        var map = L.map('map').setView([-5.080, -42.775], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        var marcadores = new Map();
+        var zoomMinimoParaCarregar = 12;
+
+        function carregarDados(bounds) {
+            if (map.getZoom() < zoomMinimoParaCarregar) {
+                console.log("Zoom muito baixo para carregar dados");
+                return;
+            }
+            
+            let north = bounds.getNorth();
+            let south = bounds.getSouth();
+            let east = bounds.getEast();
+            let west = bounds.getWest();
+            
+            fetch(`https://controle-tg.onrender.com/api/controladoras-em-campo?north=${north}&south=${south}&east=${east}&west=${west}`)
+                .then(response => response.json())
+                .then(data => {
+                    let novosMarcadores = new Map();
+                    data.forEach(poste => {
+                        let lat = parseFloat(poste.latitude.toString().replace(",", "."));
+                        let lon = parseFloat(poste.longitude.toString().replace(",", "."));
+                        let id = poste.serial;
+                        
+                        if (!isNaN(lat) && !isNaN(lon) && !marcadores.has(id)) {
+                            let marker = L.marker([lat, lon], {
+                                icon: L.icon({
+                                    iconUrl: "https://maps.google.com/mapfiles/ms/icons/yellow-dot.png",
+                                    iconSize: [32, 32]
+                                })
+                            }).bindPopup(`
+                                <strong>Serial:</strong> ${poste.serial}<br>
+                                <strong>Plaqueta:</strong> ${poste.plaqueta || "Não informado"}<br>
+                                <strong>Endereço:</strong> ${poste.endereco || "Não informado"}<br>
+                                <a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank">Abrir no Google Maps</a>
+                            `);
+                            marker.addTo(map);
+                            novosMarcadores.set(id, marker);
+                        }
+                    });
+                    
+                    marcadores.forEach((marker, id) => {
+                        if (!novosMarcadores.has(id)) {
+                            map.removeLayer(marker);
+                            marcadores.delete(id);
+                        }
+                    });
+                    
+                    novosMarcadores.forEach((marker, id) => {
+                        marcadores.set(id, marker);
+                    });
+                })
+                .catch(error => console.error("Erro ao carregar os dados: ", error));
+        }
+
+        function buscarPoste() {
+            let termoBusca = document.getElementById("search").value.trim().toLowerCase();
+            let bounds = map.getBounds();
+            
+            fetch(`https://controle-tg.onrender.com/api/controladoras-em-campo?north=${bounds.getNorth()}&south=${bounds.getSouth()}&east=${bounds.getEast()}&west=${bounds.getWest()}`)
+                .then(response => response.json())
+                .then(data => {
+                    let encontrados = data.filter(poste => 
+                        poste.serial.toLowerCase().includes(termoBusca) || 
+                        (poste.plaqueta && poste.plaqueta.toLowerCase().includes(termoBusca))
+                    );
+                    if (encontrados.length > 0) {
+                        marcadores.forEach(marcador => map.removeLayer(marcador));
+                        marcadores.clear();
+                        
+                        encontrados.forEach(poste => {
+                            let lat = parseFloat(poste.latitude.toString().replace(",", "."));
+                            let lon = parseFloat(poste.longitude.toString().replace(",", "."));
+                            if (!isNaN(lat) && !isNaN(lon)) {
+                                let marker = L.marker([lat, lon], {
+                                    icon: L.icon({
+                                        iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
+                                        iconSize: [32, 32]
+                                    })
+                                }).bindPopup(`
+                                    <strong>Serial:</strong> ${poste.serial}<br>
+                                    <strong>Plaqueta:</strong> ${poste.plaqueta || "Não informado"}<br>
+                                    <strong>Endereço:</strong> ${poste.endereco || "Não informado"}<br>
+                                    <a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank">Abrir no Google Maps</a>
+                                `).openPopup();
+                                marker.addTo(map);
+                                marcadores.set(poste.serial, marker);
+                            }
+                        });
+                        let primeiroPoste = encontrados[0];
+                        map.setView([parseFloat(primeiroPoste.latitude.replace(",", ".")), parseFloat(primeiroPoste.longitude.replace(",", "."))], 17);
+                    } else {
+                        alert("Poste não encontrado!");
+                    }
+                })
+                .catch(error => console.error("Erro na busca: ", error));
+        }
+
+        map.on('moveend', () => {
+            carregarDados(map.getBounds());
+        });
+        
+        carregarDados(map.getBounds());
+    </script>
+</body>
+</html>
